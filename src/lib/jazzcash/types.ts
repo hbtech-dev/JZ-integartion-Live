@@ -2,13 +2,17 @@ export interface JazzCashConfig {
   merchantId: string;
   password: string;
   integritySalt: string;
+  subMerchantName?: string;
   environment: 'sandbox' | 'production' | 'simulator';
   returnUrl: string;
   ipnUrl?: string;
   itnUrl?: string;
   apiUrl?: string;
   apiVersion?: string;
+  hostedUrl?: string;
+  statusInquiryUrl?: string;
 }
+
 
 export interface JazzCashPaymentPayload {
   pp_Version: string;

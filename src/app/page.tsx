@@ -85,16 +85,17 @@ export default function JazzCashCheckoutPage() {
     setTimeout(() => setCopiedRef(false), 2000);
   };
 
-  // Main Payment Action (Official JazzCash Web Checkout)
+  // Main Payment Action (Direct Live MWallet 2FA Payment)
   const handleSubmitPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!mobileNumber || !amount) return;
 
     setIsProcessing(true);
-    setProcessingStep('Preparing secure signed checkout with JazzCash...');
+    setProcessingStep(`📱 2FA MPIN Prompt sent to ${mobileNumber}! Check your phone...`);
+    setReceipt(null);
 
     try {
-      const res = await fetch('/api/jazzcash/hosted', {
+      const res = await fetch('/api/jazzcash/mwallet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -104,27 +105,27 @@ export default function JazzCashCheckoutPage() {
       });
 
       const data = await res.json();
-      if (!data.success || !data.postUrl) {
-        throw new Error(data.message || 'Failed to prepare JazzCash payment session.');
-      }
+      const isSuccess = data.success || data.responseCode === '000';
 
-      setProcessingStep('Redirecting to official JazzCash live portal...');
+      const newTxn: Transaction = {
+        id: 'txn_' + Date.now(),
+        txnRefNo: data.txnRefNo || ('T' + Date.now()),
+        amount: parseFloat(amount),
+        mobileNumber,
+        status: isSuccess ? 'SUCCESS' : 'FAILED',
+        message: data.message || (isSuccess ? 'Transaction Completed' : 'Transaction Declined'),
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      };
+      setHistory((prev) => [newTxn, ...prev]);
 
-      // Auto-submit form directly from customer's browser to JazzCash
-      const form = document.createElement('form');
-      form.method = 'POST';
-      form.action = data.postUrl;
-      Object.entries(data.payload).forEach(([k, v]) => {
-        if (v !== undefined && v !== null && v !== '') {
-          const input = document.createElement('input');
-          input.type = 'hidden';
-          input.name = k;
-          input.value = String(v);
-          form.appendChild(input);
-        }
+      setReceipt({
+        success: isSuccess,
+        message: data.message,
+        amount: parseFloat(amount),
+        txnRefNo: data.txnRefNo,
+        responseCode: data.responseCode,
+        data: data.data,
       });
-      document.body.appendChild(form);
-      form.submit();
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : 'Payment error occurred';
       setReceipt({
@@ -133,6 +134,7 @@ export default function JazzCashCheckoutPage() {
         amount: parseFloat(amount),
         txnRefNo: 'ERR-' + Date.now().toString().slice(-6),
       });
+    } finally {
       setIsProcessing(false);
       setProcessingStep('');
     }
@@ -180,7 +182,7 @@ export default function JazzCashCheckoutPage() {
                 <span className="badge badge-success">Live Account</span>
               </div>
               <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                Merchant: MC990543 • Direct Mobile Checkout
+                Merchant: 10031167 • Direct Mobile Checkout (UltraDigital)
               </p>
             </div>
           </div>

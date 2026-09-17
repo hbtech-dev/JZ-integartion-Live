@@ -8,14 +8,15 @@ import {
 } from './types';
 
 export const JAZZCASH_ENDPOINTS = {
-  v1_production: 'https://payments.jazzcash.com.pk/ApplicationAPI/API/1.1/Purchase/DoMWalletTxn',
+  v1_production: 'https://pgw.jazzcash.com.pk/api/payment/DoTransaction',
   v1_sandbox: 'https://sandbox.jazzcash.com.pk/ApplicationAPI/API/1.1/Purchase/DoMWalletTxn',
-  v2_production: 'https://payments.jazzcash.com.pk/ApplicationAPI/API/2.0/Purchase/DoMWalletTxn',
+  v2_production: 'https://pgw.jazzcash.com.pk/api/payment/DoTransaction',
   v2_sandbox: 'https://sandbox.jazzcash.com.pk/ApplicationAPI/API/2.0/Purchase/DoMWalletTxn',
   sandbox: 'https://sandbox.jazzcash.com.pk/ApplicationAPI/API/1.1/Purchase/DoMWalletTxn',
-  production: 'https://payments.jazzcash.com.pk/ApplicationAPI/API/1.1/Purchase/DoMWalletTxn',
+  production: 'https://pgw.jazzcash.com.pk/api/payment/DoTransaction',
   hostedSandbox: 'https://sandbox.jazzcash.com.pk/CustomerPortal/transactionmanagement/merchantform/',
-  hostedProduction: 'https://payments.jazzcash.com.pk/CustomerPortal/transactionmanagement/merchantform/',
+  hostedProduction: 'https://pgw.jazzcash.com.pk/CustomerPortal/transactionmanagement/merchantform',
+  statusInquiryProduction: 'https://pgw.jazzcash.com.pk/ApplicationAPI/API/PaymentInquiry/Inquire',
 };
 
 export const JAZZCASH_RESPONSE_CODES: Record<string, string> = {
@@ -37,12 +38,15 @@ export function getJazzCashConfig(overrides?: Partial<JazzCashConfig>): JazzCash
     merchantId: overrides?.merchantId || JAZZCASH_CONFIG.merchantId,
     password: overrides?.password || JAZZCASH_CONFIG.password,
     integritySalt: overrides?.integritySalt || JAZZCASH_CONFIG.integritySalt,
+    subMerchantName: overrides?.subMerchantName || JAZZCASH_CONFIG.subMerchantName,
     environment: overrides?.environment || JAZZCASH_CONFIG.environment,
     apiVersion: overrides?.apiVersion || JAZZCASH_CONFIG.apiVersion,
     returnUrl: overrides?.returnUrl || JAZZCASH_CONFIG.returnUrl,
     ipnUrl: overrides?.ipnUrl || JAZZCASH_CONFIG.ipnUrl,
     itnUrl: overrides?.itnUrl || JAZZCASH_CONFIG.itnUrl,
     apiUrl: overrides?.apiUrl || JAZZCASH_CONFIG.apiUrl,
+    hostedUrl: overrides?.hostedUrl || JAZZCASH_CONFIG.hostedUrl,
+    statusInquiryUrl: overrides?.statusInquiryUrl || JAZZCASH_CONFIG.statusInquiryUrl,
   };
 }
 
@@ -121,7 +125,7 @@ export async function initiateMWalletPayment(params: {
   // Amount in Paisas (1 PKR = 100 Paisa)
   const amountInPaisa = Math.round(params.amount * 100).toString();
   const txnDateTime = formatJazzCashDateTime();
-  const expiryDate = new Date(Date.now() + 60 * 60 * 1000); // +1 hour expiry
+  const expiryDate = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
   const txnExpiryDateTime = formatJazzCashDateTime(expiryDate);
   const txnRefNo = generateTxnRefNo();
   const billReference = params.billReference || `INV-${Date.now().toString().slice(-6)}`;
@@ -129,8 +133,8 @@ export async function initiateMWalletPayment(params: {
 
   const apiVersion = config.apiVersion || '1.1';
 
-  // Build payload
-  const payload: JazzCashPaymentPayload = {
+  // Build payload strictly following verified PGW MWALLET API specification
+  const payload: Record<string, string> = {
     pp_Version: apiVersion,
     pp_TxnType: 'MWALLET',
     pp_Language: 'EN',
@@ -143,91 +147,22 @@ export async function initiateMWalletPayment(params: {
     pp_BillReference: billReference,
     pp_Description: description,
     pp_TxnExpiryDateTime: txnExpiryDateTime,
+    pp_SubMerchantName: config.subMerchantName || 'UltraDigital',
     pp_ReturnURL: config.returnUrl,
-    pp_MobileNumber: cleanPhone,
+    ppmpf_1: cleanPhone,
+    ppmpf_2: '',
+    ppmpf_3: '',
+    ppmpf_4: '',
+    ppmpf_5: '',
   };
-
-  // CNIC is only for v2.0; API 1.1 / 1.0 does not require it
-  if (apiVersion.startsWith('2') && params.cnic && params.cnic.trim().length === 6) {
-    payload.pp_CNIC = params.cnic.trim();
-  }
 
   // Calculate HMAC-SHA256 signature
   const secureHash = generateJazzCashSecureHash(payload, config.integritySalt);
   payload.pp_SecureHash = secureHash;
 
-  // 1. Simulated Sandbox Mode (for immediate testing without waiting for live merchant keys)
-  if (
-    config.environment === 'simulator' ||
-    config.merchantId === 'MC12345' ||
-    !config.merchantId
-  ) {
-    // Check simulated test triggers
-    if (cleanPhone.endsWith('0000')) {
-      return {
-        success: false,
-        message: JAZZCASH_RESPONSE_CODES['110'] || 'Insufficient funds in the wallet.',
-        responseCode: '110',
-        txnRefNo,
-        amount: params.amount,
-        mobileNumber: cleanPhone,
-        isSimulated: true,
-        rawPayload: payload as Record<string, string>,
-      };
-    }
-
-    if (cleanPhone.endsWith('1111')) {
-      return {
-        success: false,
-        message: JAZZCASH_RESPONSE_CODES['113'] || 'Invalid MPIN entered on customer phone.',
-        responseCode: '113',
-        txnRefNo,
-        amount: params.amount,
-        mobileNumber: cleanPhone,
-        isSimulated: true,
-        rawPayload: payload as Record<string, string>,
-      };
-    }
-
-    // Default simulated success
-    const mockResponse: JazzCashResponseData = {
-      pp_ResponseCode: '000',
-      pp_ResponseMessage: 'Thank you for using JazzCash, your transaction was successful.',
-      pp_TxnRefNo: txnRefNo,
-      pp_Amount: amountInPaisa,
-      pp_RetreivalReferenceNo: `RRN${Date.now().toString().slice(-8)}`,
-      pp_AuthCode: `AUTH${Math.floor(100000 + Math.random() * 900000)}`,
-      pp_TxnDateTime: txnDateTime,
-      pp_BillReference: billReference,
-    };
-
-    // Calculate response hash for mock
-    mockResponse.pp_SecureHash = generateJazzCashSecureHash(mockResponse, config.integritySalt);
-
-    return {
-      success: true,
-      message: mockResponse.pp_ResponseMessage || 'Payment processed successfully.',
-      responseCode: '000',
-      txnRefNo,
-      amount: params.amount,
-      mobileNumber: cleanPhone,
-      data: mockResponse,
-      rawPayload: payload as Record<string, string>,
-      isSimulated: true,
-    };
-  }
-
-  // 2. Real Sandbox or Production Gateway Request
+  // Real PGW Production Gateway Request
   try {
-    const endpoint =
-      config.apiUrl ||
-      (config.environment === 'production'
-        ? (config.apiVersion?.startsWith('1')
-            ? JAZZCASH_ENDPOINTS.v1_production
-            : JAZZCASH_ENDPOINTS.v2_production)
-        : (config.apiVersion?.startsWith('1')
-            ? JAZZCASH_ENDPOINTS.v1_sandbox
-            : JAZZCASH_ENDPOINTS.v2_sandbox));
+    const endpoint = config.apiUrl || JAZZCASH_ENDPOINTS.v1_production;
 
     console.log('\n================ JAZZCASH PAYMENT DISPATCH ================');
     console.log('Target Endpoint:', endpoint);
@@ -247,6 +182,7 @@ export async function initiateMWalletPayment(params: {
     console.log('HTTP Status:', response.status, response.statusText);
     console.log('Raw Gateway Response:', rawText);
     console.log('===========================================================\n');
+
 
     let data: JazzCashResponseData = {};
     try {
@@ -359,3 +295,39 @@ export function generateHostedCheckoutPayload(params: {
     txnRefNo,
   };
 }
+
+/**
+ * Performs a live Status Inquiry against JazzCash Payment Gateway.
+ */
+export async function checkPaymentStatusInquiry(txnRefNo: string) {
+  const config = getJazzCashConfig();
+  const payload: Record<string, string> = {
+    pp_MerchantID: config.merchantId,
+    pp_Password: config.password,
+    pp_TxnRefNo: txnRefNo,
+  };
+  payload.pp_SecureHash = generateJazzCashSecureHash(payload, config.integritySalt);
+
+  const endpoint = config.statusInquiryUrl || JAZZCASH_ENDPOINTS.statusInquiryProduction;
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+    return data;
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Failed to query transaction status';
+    return {
+      pp_ResponseCode: '999',
+      pp_ResponseMessage: errorMsg,
+      error: errorMsg,
+    };
+  }
+}
+

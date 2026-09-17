@@ -22,12 +22,14 @@ export function generateJazzCashSecureHash(
   const validKeys = Object.keys(params)
     .filter(
       (key) =>
+        key.startsWith('pp') &&
         key !== 'pp_SecureHash' &&
         params[key] !== undefined &&
         params[key] !== null &&
         params[key] !== ''
     )
     .sort();
+
 
   // 2. Concatenate: IntegritySalt & val1 & val2 & ...
   let hashString = integritySalt;
