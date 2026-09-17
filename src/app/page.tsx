@@ -12,7 +12,6 @@ import {
   Check,
   ArrowRight,
   RefreshCw,
-  ExternalLink,
 } from 'lucide-react';
 
 interface Transaction {
@@ -86,57 +85,14 @@ export default function JazzCashCheckoutPage() {
     setTimeout(() => setCopiedRef(false), 2000);
   };
 
-  // Main Payment Action
+  // Main Payment Action (Official JazzCash Web Checkout)
   const handleSubmitPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!mobileNumber || !amount) return;
 
     setIsProcessing(true);
-    setProcessingStep('Connecting to JazzCash...');
+    setProcessingStep('Preparing secure signed checkout with JazzCash...');
 
-    try {
-      const response = await fetch('/api/jazzcash/mwallet', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mobileNumber,
-          amount: parseFloat(amount),
-        }),
-      });
-
-      const data = await response.json();
-      setReceipt(data);
-
-      // Add to history
-      const newTxn: Transaction = {
-        id: Date.now().toString(),
-        txnRefNo: data.txnRefNo || `T-${Date.now()}`,
-        amount: parseFloat(amount),
-        mobileNumber,
-        status: data.success ? 'SUCCESS' : 'FAILED',
-        message: data.message,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      };
-
-      setHistory((prev) => [newTxn, ...prev]);
-    } catch (err: unknown) {
-      const errorMsg = err instanceof Error ? err.message : 'Network error occurred';
-      setReceipt({
-        success: false,
-        message: errorMsg,
-        amount: parseFloat(amount),
-        txnRefNo: 'ERR-' + Date.now().toString().slice(-6),
-      });
-    } finally {
-      setIsProcessing(false);
-      setProcessingStep('');
-    }
-  };
-
-  // Redirect to JazzCash portal if needed
-  const handleOpenHostedPortal = async () => {
-    setIsProcessing(true);
-    setProcessingStep('Opening JazzCash portal...');
     try {
       const res = await fetch('/api/jazzcash/hosted', {
         method: 'POST',
@@ -146,24 +102,37 @@ export default function JazzCashCheckoutPage() {
           amount: parseFloat(amount),
         }),
       });
+
       const data = await res.json();
-      if (data.success && data.postUrl) {
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = data.postUrl;
-        Object.entries(data.payload).forEach(([k, v]) => {
-          if (v !== undefined && v !== null && v !== '') {
-            const input = document.createElement('input');
-            input.type = 'hidden';
-            input.name = k;
-            input.value = String(v);
-            form.appendChild(input);
-          }
-        });
-        document.body.appendChild(form);
-        form.submit();
+      if (!data.success || !data.postUrl) {
+        throw new Error(data.message || 'Failed to prepare JazzCash payment session.');
       }
-    } catch {
+
+      setProcessingStep('Redirecting to official JazzCash live portal...');
+
+      // Auto-submit form directly from customer's browser to JazzCash
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = data.postUrl;
+      Object.entries(data.payload).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== '') {
+          const input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = k;
+          input.value = String(v);
+          form.appendChild(input);
+        }
+      });
+      document.body.appendChild(form);
+      form.submit();
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'Payment error occurred';
+      setReceipt({
+        success: false,
+        message: errorMsg,
+        amount: parseFloat(amount),
+        txnRefNo: 'ERR-' + Date.now().toString().slice(-6),
+      });
       setIsProcessing(false);
       setProcessingStep('');
     }
@@ -633,34 +602,7 @@ export default function JazzCashCheckoutPage() {
                 </div>
               </div>
 
-              {/* If connection failed due to localhost firewall, offer 1-click fallback */}
-              {!receipt.success && receipt.message?.includes('ECONNRESET') && (
-                <div
-                  style={{
-                    padding: '12px',
-                    background: 'rgba(255, 85, 0, 0.1)',
-                    border: '1px solid rgba(255, 85, 0, 0.3)',
-                    borderRadius: 'var(--radius-sm)',
-                    marginBottom: '16px',
-                    fontSize: '0.8rem',
-                    color: '#fdba74',
-                    lineHeight: 1.4,
-                  }}
-                >
-                  <strong>Notice:</strong> JazzCash live production requires IP whitelisting for direct server calls. You can either deploy to Vercel/server, or click below to complete via the JazzCash portal:
-                  <button
-                    onClick={() => {
-                      setReceipt(null);
-                      handleOpenHostedPortal();
-                    }}
-                    className="btn-jazz"
-                    style={{ width: '100%', marginTop: '10px', padding: '10px', fontSize: '0.9rem' }}
-                  >
-                    <ExternalLink size={15} />
-                    Complete via JazzCash Portal
-                  </button>
-                </div>
-              )}
+
 
               {/* Action Buttons */}
               <div style={{ display: 'flex', gap: '10px' }}>
